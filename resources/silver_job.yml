@@ -1,0 +1,17 @@
+resources:
+  jobs:
+    tp_silver:
+      name: tp_silver_${bundle.target}
+
+      max_concurrent_runs: 1
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+
+      tasks:
+        - task_key: silver_pipeline
+          notebook_task:
+            notebook_path: ../src/notebooks/silver_data_transformation.py
+          environment_key: default

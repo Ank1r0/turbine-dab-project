@@ -1,0 +1,31 @@
+resources:
+  jobs:
+    tp_bronze:
+      name: tp_bronze_${bundle.target}
+
+      max_concurrent_runs: 1
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+
+      tasks:
+        - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/total_cleanup.py
+          environment_key: default
+
+        - task_key: bronze_layer_ingestion
+          depends_on:
+            - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/bronze_ingestion.py
+          environment_key: default
+
+        - task_key: start_file_streaming
+          depends_on:
+            - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/file_arrival_simulator.py
+          environment_key: default
