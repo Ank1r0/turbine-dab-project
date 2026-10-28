@@ -1,14 +1,26 @@
 # Databricks notebook source
+# MAGIC %md
+# MAGIC # File arrival simulator
+# MAGIC Copies the source JSON files one by one into the landing volume at random intervals, to imitate a stream.
+# MAGIC Each file is copied to a temporary name and then renamed, so Auto Loader never reads a half-written file.
+# MAGIC The notebook ends once every source file has been delivered.
+
+# COMMAND ----------
+
+# DBTITLE 1,Configuration - Volume Paths
 import shutil
 import time
 import random
 from pathlib import Path
 
-# COMMAND ----------
+dbutils.widgets.text("catalog", "turbine_project")
+dbutils.widgets.text("schema_bronze", "bronze")
 
-# DBTITLE 1,Configuration - Volume Paths
-SOURCE_VOLUME = Path("/Volumes/turbine_project/autoloader_metadata/source_volume/turbine_events/turbine_events")
-TARGET_VOLUME = Path("/Volumes/turbine_project/bronze/landing_volume")
+CATALOG = dbutils.widgets.get("catalog")
+SCHEMA_BRONZE = dbutils.widgets.get("schema_bronze")
+
+SOURCE_VOLUME = Path(f"/Volumes/{CATALOG}/autoloader_metadata/source_volume/turbine_events/turbine_events")
+TARGET_VOLUME = Path(f"/Volumes/{CATALOG}/{SCHEMA_BRONZE}/landing_volume")
 
 MIN_DELAY_SEC = 1
 MAX_DELAY_SEC = 5
@@ -18,30 +30,25 @@ FILE_PATTERN = "*.json"
 # COMMAND ----------
 
 # DBTITLE 1,Test Volume Paths
-# Verify paths and check data
-print("🔍 Testing volume paths...\n")
+print("Testing volume paths...\n")
 
-# Check source volume
 if SOURCE_VOLUME.exists():
-    source_files = list(SOURCE_VOLUME.glob(FILE_PATTERN))
-    print(f"✅ Source volume exists: {SOURCE_VOLUME}")
+    source_files = list(SOURCE_VOLUME.rglob(FILE_PATTERN))
+    print(f"Source volume exists: {SOURCE_VOLUME}")
     print(f"   Found {len(source_files)} JSON files")
     if source_files:
         print(f"   First file: {source_files[0].name}")
 else:
-    print(f"❌ Source volume NOT found: {SOURCE_VOLUME}")
+    raise FileNotFoundError(f"Source volume NOT found: {SOURCE_VOLUME}")
 
 print()
 
-# Check target volume
 if TARGET_VOLUME.exists():
     target_files = list(TARGET_VOLUME.glob(FILE_PATTERN))
-    print(f"✅ Target volume exists: {TARGET_VOLUME}")
+    print(f"Target volume exists: {TARGET_VOLUME}")
     print(f"   Contains {len(target_files)} JSON files")
 else:
-    print(f"⚠️ Target volume NOT found (will be created): {TARGET_VOLUME}")
-
-print("\n✅ Path configuration verified!")
+    print(f"Target volume NOT found (will be created): {TARGET_VOLUME}")
 
 # COMMAND ----------
 
@@ -59,7 +66,7 @@ def copy_atomic(src: Path, dst: Path):
     """
     Atomic copy:
     First copy to temporary file,
-    then rename → Auto Loader won't read half-written files
+    then rename -> Auto Loader won't read half-written files
     """
     temp_dst = dst.with_suffix(".tmp")
 
@@ -75,24 +82,23 @@ def run():
 
     TARGET_VOLUME.mkdir(parents=True, exist_ok=True)
 
+    copied = 0
     while True:
         files = get_files_to_copy()
 
         if not files:
-            print("No more files to copy. Waiting...")
-            time.sleep(5)
-            continue
+            print(f"All source files delivered ({copied} copied in this run).")
+            return
 
         file_to_copy = files[0]
-
         destination = TARGET_VOLUME / file_to_copy.name
 
         copy_atomic(file_to_copy, destination)
+        copied += 1
 
-        print(f"Copied → {file_to_copy.name}")
+        print(f"Copied -> {file_to_copy.name}")
 
-        delay = random.randint(MIN_DELAY_SEC, MAX_DELAY_SEC)
-        time.sleep(delay)
+        time.sleep(random.randint(MIN_DELAY_SEC, MAX_DELAY_SEC))
 
 
 # COMMAND ----------

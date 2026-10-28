@@ -14,4 +14,8 @@ resources:
         - task_key: gold_pipeline
           notebook_task:
             notebook_path: ../src/notebooks/gold_layer_analytics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
           environment_key: default

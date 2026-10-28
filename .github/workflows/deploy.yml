@@ -19,6 +19,10 @@ jobs:
         with:
           python-version: '3.11'
       
+      - name: Check notebook syntax
+        run: |
+          python -m py_compile src/notebooks/*.py
+
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -44,3 +48,5 @@ jobs:
           echo "  - tp_bronze_dev"
           echo "  - tp_silver_dev"
           echo "  - tp_gold_dev"
+          echo "  - tp_monitoring_dev"
+          echo "  - tp_pipeline_dev"

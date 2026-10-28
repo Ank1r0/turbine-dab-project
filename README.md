@@ -1,173 +1,95 @@
 # Turbine Project - Databricks Asset Bundle (DAB)
 
-This project implements a Medallion Architecture (Bronze, Silver, Gold) using Databricks Asset Bundles for deployment automation.
+A medallion pipeline (Bronze, Silver, Gold) on Databricks for simulated wind-turbine telemetry from 50 devices. The whole workspace is defined as a Databricks Asset Bundle and deployed by GitHub Actions.
 
-## Project Structure
+## Project structure
 
 ```
-turbine_dab_project/
-├── databricks.yml              # Main DAB configuration
-├── README.md                   # This file
-├── .github/
-│   └── workflows/
-│       └── deploy.yml          # CI/CD pipeline
-├── src/
-│   └── notebooks/              # Notebook source files (.py or .ipynb)
-│       ├── total_cleanup.py
-│       ├── bronze_ingestion.py
-│       ├── file_arrival_simulator.py
-│       ├── silver_data_transformation.py
-│       └── gold_layer_analytics.py
-└── resources/
-    ├── bronze_job.yml          # Bronze layer job definition
-    ├── silver_job.yml          # Silver layer job definition
-    └── gold_job.yml            # Gold layer job definition
+.
+├── databricks.yml                  # Bundle config: variables, dev target
+├── .github/workflows/deploy.yml    # CI/CD: syntax check, validate, deploy
+├── resources/
+│   ├── bronze_job.yml              # tp_bronze:     CLEANUP -> bronze ingestion + file simulator
+│   ├── silver_job.yml              # tp_silver:     silver transformation
+│   ├── gold_job.yml                # tp_gold:       gold aggregations
+│   ├── monitoring_job.yml          # tp_monitoring: reconciliation check
+│   └── pipeline_job.yml            # tp_pipeline:   all of the above chained end to end
+└── src/notebooks/
+    ├── total_cleanup.py            # guarded full reset
+    ├── file_arrival_simulator.py   # copies source files into the landing volume at random intervals
+    ├── bronze_ingestion.py         # Auto Loader -> bronze Delta table
+    ├── silver_data_transformation.py
+    ├── gold_layer_analytics.py
+    └── monitoring_pipeline.py      # bronze -> silver reconciliation, rejected readings, gold status
 ```
 
 ## Architecture
 
-### Bronze Layer (tp_bronze)
-- **Task 1**: `CLEANUP` - Runs total_cleanup notebook first
-- **Task 2**: `bronze_layer_ingestion` - Ingests raw data (depends on CLEANUP)
-- **Task 3**: `start_file_streaming` - Simulates file arrivals (depends on CLEANUP)
+| Layer | Table(s) | What happens |
+|---|---|---|
+| Bronze | `bronze.turbine_events_raw` | Auto Loader reads raw JSON files as they arrive; no transformation. Each row holds an array of metric readings as a JSON string. |
+| Silver | `silver.turbine_events_clean`, `silver.turbine_events_rejected` | The JSON payload is parsed into one row per reading. Every reading is validated; valid readings are pivoted into one wide, typed row per (device, event time) and appended unless that event is already in silver. Invalid readings go to the rejected table with a `reject_reason`. |
+| Gold | `gold.turbine_metrics_{avg,min,max,stddev}` | One-minute windows per device and numeric metric. Affected windows are recomputed from the full silver table and MERGEd. |
 
-### Silver Layer (tp_silver)
-- **Task**: `silver_pipeline` - Transforms and cleanses bronze data
+### Silver validation rules
 
-### Gold Layer (tp_gold)
-- **Task**: `gold_pipeline` - Creates analytics aggregations
+A reading is rejected, and written to `turbine_events_rejected`, when it has: no device id (`missing_device_id`), no metric name (`missing_metric`), no timestamp (`missing_timestamp`), a timestamp before 2000-01-01 or more than a day in the future (`malformed_timestamp`), no value (`missing_value`), a metric outside the known list (`unknown_metric`), or a value that cannot be parsed as the metric's type (`invalid_value`). A payload that cannot be parsed at all becomes one all-NULL reading and is rejected too, so nothing is dropped silently.
+
+Assumption: all readings of one (device, timestamp) event arrive in the same micro-batch. A later batch carrying an event already in silver is ignored; silver is append-only so that gold can stream from it.
+
+### Monitoring
+
+`monitoring_pipeline.py` compares events, not raw row counts, because one bronze row (a file) holds many readings. It re-derives the valid (device, event time) set from bronze with the same rules as silver and checks that none is missing in silver and that silver has no duplicate keys. It also reports rejected readings per reason, data freshness and the gold tables. In `snapshot` mode (the job) a failed check fails the task. In `loop` mode it prints a report every `interval_seconds`.
+
+## Parameters and bundle variables
+
+Catalog and schema names come from bundle variables (`catalog`, `schema_bronze`, `schema_silver`, `schema_gold`) and are passed to every notebook as job parameters; the notebooks read them with widgets, so there are no hardcoded table or volume names. The `reset_on_run` variable (default `"false"`) controls the destructive `CLEANUP` task.
 
 ## Prerequisites
 
-1. **Databricks CLI** installed locally
+1. Databricks CLI installed locally
    ```bash
    curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
    ```
+2. Databricks authentication (workspace URL and a personal access token)
+3. In Unity Catalog: catalog `turbine_project`, schemas `bronze`, `silver`, `gold`, `autoloader_metadata`, a `landing_volume` in `bronze`, a `checkpoint_volume` and a `source_volume` (with the source JSON files under `turbine_events/turbine_events`) in `autoloader_metadata`.
 
-2. **Databricks authentication**
-   - Host: Your Databricks workspace URL
-   - Token: Personal access token
-
-3. **Git repository** with this code
-
-## Local Development
-
-### 1. Export Notebooks to src/notebooks/
-
-Export your workspace notebooks as Python files:
-```bash
-# From your current workspace location, export each notebook
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/monitoring/total_cleanup src/notebooks/total_cleanup.py --format SOURCE
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/bronze/bronze_ingestion src/notebooks/bronze_ingestion.py --format SOURCE
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/bronze/file_arrival_simulator src/notebooks/file_arrival_simulator.py --format SOURCE
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/silver/silver_data_transformation src/notebooks/silver_data_transformation.py --format SOURCE
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/gold/gold_layer_analytics src/notebooks/gold_layer_analytics.py --format SOURCE
-```
-
-### 2. Validate Bundle
+## Local development
 
 ```bash
-cd turbine_dab_project
 databricks bundle validate -t dev
-```
-
-### 3. Deploy to Dev Environment
-
-```bash
 databricks bundle deploy -t dev
-```
 
-This will create:
-- `tp_bronze_dev` job
-- `tp_silver_dev` job
-- `tp_gold_dev` job
+# Full run, chained: cleanup (skipped unless reset_on_run=true) -> bronze + simulator -> silver -> gold -> reconciliation
+databricks bundle run tp_pipeline -t dev
 
-### 4. Run Jobs
+# Full restart from scratch (drops all tables, checkpoints and landing files)
+databricks bundle run tp_pipeline -t dev --var="reset_on_run=true"
 
-```bash
-# Run bronze job (includes cleanup)
+# Or run the layers separately
 databricks bundle run tp_bronze -t dev
-
-# Run silver job
 databricks bundle run tp_silver -t dev
-
-# Run gold job
 databricks bundle run tp_gold -t dev
+databricks bundle run tp_monitoring -t dev
 ```
+
+All notebooks run on serverless compute (environment client `2`). Because serverless does not support `processingTime` triggers, each streaming notebook runs its stream with `availableNow=True` in a loop and stops after `idle_limit` consecutive iterations that read no new rows, so every job finishes on its own.
 
 ## CI/CD with GitHub Actions
 
-### Setup GitHub Secrets
+Runs on every push to `main` and on manual trigger. Add the repository secrets `DATABRICKS_HOST` and `DATABRICKS_TOKEN` first.
 
-1. Go to your GitHub repository
-2. Navigate to **Settings** → **Secrets and variables** → **Actions**
-3. Add the following secrets:
-   - `DATABRICKS_HOST`: Your Databricks workspace URL (e.g., `https://adb-123456789.azuredatabricks.net`)
-   - `DATABRICKS_TOKEN`: Your personal access token
+1. Checkout and set up Python 3.11
+2. Syntax-check every notebook (`python -m py_compile`)
+3. Install the Databricks CLI
+4. `databricks bundle validate -t dev`
+5. `databricks bundle deploy -t dev`
 
-### Workflow Trigger
+CI deploys and validates the bundle but does not run the pipeline or any data tests.
 
-The deployment workflow runs automatically on:
-- Push to `main` branch
-- Manual trigger via workflow_dispatch
+## Known limitations
 
-### Workflow Steps
-
-1. **Checkout code** - Gets the latest code
-2. **Setup Python** - Installs Python 3.11
-3. **Install Databricks CLI** - Downloads and installs CLI
-4. **Validate bundle** - Runs validation checks
-5. **Deploy bundle** - Deploys to dev environment
-6. **Show summary** - Displays deployment results
-
-## Configuration Details
-
-### databricks.yml
-
-- **Bundle name**: `turbine_project_dab`
-- **Target**: `dev` (can add `staging`, `prod` later)
-- **Variables**: Catalog and schema names
-- **Workspace root**: `.bundle/turbine_project_dab/dev`
-
-### Job Definitions
-
-Each job YAML file in `resources/` defines:
-- Job name with `${bundle.target}` suffix
-- Tasks with notebook paths
-- Cluster configuration (Photon-enabled, single-user)
-- Task dependencies (for bronze job)
-
-## Next Steps
-
-1. **Export notebooks** to `src/notebooks/` directory
-2. **Commit and push** to GitHub
-3. **Verify GitHub Actions** deployment
-4. **Add schedules** to job YAMLs if needed:
-   ```yaml
-   schedule:
-     quartz_cron_expression: "0 0 * * * ?"
-     timezone_id: "America/New_York"
-   ```
-
-## Troubleshooting
-
-### Validation fails
-- Check YAML syntax
-- Verify notebook paths match actual files
-- Ensure all required fields are present
-
-### Deployment fails
-- Verify authentication (host and token)
-- Check workspace permissions
-- Review bundle validation output
-
-### Job execution fails
-- Check notebook code for errors
-- Verify table and catalog names
-- Review cluster configuration
-
-## Additional Resources
-
-- [Databricks Asset Bundles Documentation](https://docs.databricks.com/dev-tools/bundles/)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [Databricks CLI Reference](https://docs.databricks.com/dev-tools/cli/)
+- The notebooks need a Databricks workspace to run; they were not executed outside it.
+- Late readings of an event that already exists in silver are ignored (see the silver assumption above).
+- Only a `dev` target exists.
+- No scheduling or alerting is configured; the reconciliation task fails the job run, and notifications are left to the workspace.

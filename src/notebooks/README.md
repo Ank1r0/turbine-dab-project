@@ -1,61 +1,16 @@
-# Notebooks Directory
+# Notebooks
 
-This directory contains the source code for all notebooks used in the Turbine Project medallion architecture.
+Source of every notebook deployed by the bundle (Databricks "notebook source" Python files).
 
-## Required Notebooks
+| File | Layer | Purpose |
+|---|---|---|
+| `total_cleanup.py` | reset | Drops all pipeline tables, checkpoints and landing files. Only runs when `confirm_reset` is `true`. |
+| `file_arrival_simulator.py` | bronze | Copies source JSON files into the landing volume at random 1-5 s intervals; ends when all files are delivered. |
+| `bronze_ingestion.py` | bronze | Auto Loader into `turbine_events_raw`; ends after `idle_limit` idle iterations. |
+| `silver_data_transformation.py` | silver | Parse, validate, pivot, deduplicate; invalid readings go to `turbine_events_rejected`. |
+| `gold_layer_analytics.py` | gold | One-minute avg/min/max/stddev per device and metric; affected windows are recomputed from silver. |
+| `monitoring_pipeline.py` | monitoring | Reconciles valid bronze events with silver, reports rejects and gold status. |
 
-### Monitoring
-- `total_cleanup.py` - Cleanup script that runs first in bronze job
+Every notebook takes its catalog and schema names from widgets, which the job definitions fill from the bundle variables in `databricks.yml`. The validity rules in `silver_data_transformation.py` and `monitoring_pipeline.py` are duplicated on purpose; change them in both.
 
-### Bronze Layer
-- `bronze_ingestion.py` - Ingests raw turbine data
-- `file_arrival_simulator.py` - Simulates file arrivals for testing
-
-### Silver Layer
-- `silver_data_transformation.py` - Cleanses and transforms bronze data
-
-### Gold Layer
-- `gold_layer_analytics.py` - Creates analytics aggregations
-
-## Exporting Notebooks
-
-### Option 1: Use the export script (Recommended)
-
-From the project root directory:
-```bash
-chmod +x export_notebooks.sh
-./export_notebooks.sh
-```
-
-### Option 2: Manual export
-
-Export each notebook individually:
-```bash
-# Example:
-databricks workspace export /Users/illia.volchetskyi@innowise.com/turbine_project_pipelines/turbine_project/monitoring/total_cleanup src/notebooks/total_cleanup.py --format SOURCE
-```
-
-## File Format
-
-Notebooks should be exported as:
-- **Python source** (`.py`) - Recommended for version control
-- **Jupyter format** (`.ipynb`) - Alternative if you need to preserve outputs
-
-The DAB job definitions reference these files using relative paths:
-```yaml
-notebook_path: ../src/notebooks/total_cleanup.py
-```
-
-## Version Control
-
-These files should be:
-✅ Committed to Git
-✅ Reviewed in pull requests
-✅ Deployed via CI/CD
-
-## Notes
-
-- Keep notebook code production-ready
-- Avoid hardcoded paths when possible (use variables)
-- Include error handling and logging
-- Test notebooks locally before committing
+`export_notebooks.sh` in the repo root exports notebooks from the original workspace; it overwrites these files with the workspace copies, so do not run it after editing here.

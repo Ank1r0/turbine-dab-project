@@ -1,0 +1,81 @@
+resources:
+  jobs:
+    tp_pipeline:
+      name: tp_pipeline_${bundle.target}
+      description: End-to-end run - cleanup (only if reset_on_run=true), bronze + file simulator in parallel, then silver, gold and the reconciliation check.
+
+      max_concurrent_runs: 1
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+
+      tasks:
+        - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/total_cleanup.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
+              confirm_reset: ${var.reset_on_run}
+          environment_key: default
+
+        - task_key: start_file_streaming
+          depends_on:
+            - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/file_arrival_simulator.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+          environment_key: default
+
+        - task_key: bronze_layer_ingestion
+          depends_on:
+            - task_key: CLEANUP
+          notebook_task:
+            notebook_path: ../src/notebooks/bronze_ingestion.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+          environment_key: default
+
+        - task_key: silver_pipeline
+          depends_on:
+            - task_key: bronze_layer_ingestion
+            - task_key: start_file_streaming
+          notebook_task:
+            notebook_path: ../src/notebooks/silver_data_transformation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
+          environment_key: default
+
+        - task_key: gold_pipeline
+          depends_on:
+            - task_key: silver_pipeline
+          notebook_task:
+            notebook_path: ../src/notebooks/gold_layer_analytics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
+          environment_key: default
+
+        - task_key: reconcile_layers
+          depends_on:
+            - gold_pipeline
+          notebook_task:
+            notebook_path: ../src/notebooks/monitoring_pipeline.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
+              mode: snapshot
+              fail_on_mismatch: "true"
+          environment_key: default
