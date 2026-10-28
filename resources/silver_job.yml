@@ -14,4 +14,8 @@ resources:
         - task_key: silver_pipeline
           notebook_task:
             notebook_path: ../src/notebooks/silver_data_transformation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
           environment_key: default

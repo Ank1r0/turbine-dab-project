@@ -14,6 +14,12 @@ resources:
         - task_key: CLEANUP
           notebook_task:
             notebook_path: ../src/notebooks/total_cleanup.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
+              confirm_reset: ${var.reset_on_run}
           environment_key: default
 
         - task_key: bronze_layer_ingestion
@@ -21,6 +27,9 @@ resources:
             - task_key: CLEANUP
           notebook_task:
             notebook_path: ../src/notebooks/bronze_ingestion.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
           environment_key: default
 
         - task_key: start_file_streaming
@@ -28,4 +37,7 @@ resources:
             - task_key: CLEANUP
           notebook_task:
             notebook_path: ../src/notebooks/file_arrival_simulator.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
           environment_key: default

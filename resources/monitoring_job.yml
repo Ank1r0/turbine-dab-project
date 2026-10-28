@@ -1,0 +1,24 @@
+resources:
+  jobs:
+    tp_monitoring:
+      name: tp_monitoring_${bundle.target}
+
+      max_concurrent_runs: 1
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+
+      tasks:
+        - task_key: reconcile_layers
+          notebook_task:
+            notebook_path: ../src/notebooks/monitoring_pipeline.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema_bronze: ${var.schema_bronze}
+              schema_silver: ${var.schema_silver}
+              schema_gold: ${var.schema_gold}
+              mode: snapshot
+              fail_on_mismatch: "true"
+          environment_key: default

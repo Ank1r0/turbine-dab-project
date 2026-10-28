@@ -8,18 +8,22 @@ variables:
   catalog:
     description: Unity Catalog name
     default: turbine_project
-  
+
   schema_bronze:
     description: Bronze schema name
     default: bronze
-  
+
   schema_silver:
     description: Silver schema name
     default: silver
-  
+
   schema_gold:
     description: Gold schema name
     default: gold
+
+  reset_on_run:
+    description: When "true", the CLEANUP task drops all pipeline tables, checkpoints and landing files before the run. Keep "false" unless you want a full restart.
+    default: "false"
 
 targets:
   dev:
@@ -28,9 +32,10 @@ targets:
     workspace:
       host: https://dbc-1931d209-edbc.cloud.databricks.com
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
-    
+
     variables:
       catalog: turbine_project
       schema_bronze: bronze
       schema_silver: silver
       schema_gold: gold
+      reset_on_run: "false"
